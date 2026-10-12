@@ -176,7 +176,8 @@ kaya/
 │  │  └─ turn.ts          # end-of-turn, barge-in, follow-up window
 │  ├─ stt/
 │  │  ├─ provider.ts      # interface: transcribe(Int16Array, sampleRate) → text
-│  │  ├─ whisper-cpp.ts   # local, HTTP /inference
+│  │  ├─ local.ts         # whisper.cpp CLI, spawned on the Pi  ← the switchable path
+│  │  ├─ remote.ts        # whisper.cpp server over HTTP /inference ← ditto
 │  │  ├─ openai.ts        # gpt-4o-transcribe
 │  │  └─ elevenlabs.ts    # optional
 │  ├─ llm/
@@ -292,8 +293,39 @@ Without this, a weak local model produces a subtly broken assistant and you debu
 afternoon. With it, you get a warning at boot: *"qwen2.5:3b — no tool calling, Kaya will
 only chat."*
 
-**STT**, same treatment: `whisper.cpp` `/inference` (local, ~300 ms on tiny/base for short
-utterances), OpenAI `gpt-4o-transcribe`, or ElevenLabs STT.
+**STT is a runtime switch, not a build-time choice.** `stt.provider` is a dashboard setting,
+and the two paths are the same engine over two transports — I verified both:
+
+| | `local` | `remote` |
+|---|---|---|
+| What runs | `whisper-cli` spawned on the Pi | `whisper-server` on a LAN box |
+| Call | temp WAV → `-oj` → parse JSON | `POST /inference` multipart → `response_format=json` |
+| Model load | per invocation | resident in the server, swappable via `/load` |
+| Latency (Pi 3) | ~1–2 s per utterance, `tiny` faster | ~300–600 ms, Pi does nothing |
+| Good for | Pi offline, no other box, privacy-max | everyday use, keeps the Pi responsive |
+
+Both return the same `{text}` shape, so `provider.ts` is one interface with two
+implementations and the conversation pipeline never knows which is active. Switching in the
+dashboard takes effect on the next utterance, no restart.
+
+**Local mode spawns a process per utterance, and that has consequences I want to be honest
+about.** The `whisper-cli` binary exits when done, so the model reloads from disk every turn
+— on an SD card that's a second or more of pure I/O before it transcribes anything. → Kaya
+caches the model file in **tmpfs** (`/dev/shm`) at boot, and `doctor` tells you if `/dev/shm`
+is small. `local` mode also defaults to `tiny.en` for latency; `base.en` is a config toggle
+for when accuracy matters more than response time.
+
+**The honest tradeoff on a Pi 3:** `local` STT and the wake word want the same cores. A
+transcription pass can cause a missed "Hey Kaya" while it runs. Two mitigations, both on:
+1. Kaya **lowers wake sensitivity for the duration of a transcription** rather than
+   disabling it, so it still fires, just needs a louder word.
+2. `local` mode shows a "thinking" state on the LED — you're visibly told the mic is busy.
+
+Pick `remote` for daily use, keep `local` as the offline fallback. That's why it's a switch
+and not a decision.
+
+**Third-party STT** (`openai.ts`, `elevenlabs.ts`) sits alongside both — same interface,
+selected the same way.
 
 ### MiniMax M3.1-Flash-Preview — the current test target
 
@@ -386,7 +418,12 @@ Same origin as the API, no build step.
 - **Voices** ⭐ — provider picker, live voice list, sample playback, rate/pitch/volume
 - **LLM** — provider presets (Ollama / llama.cpp / LM Studio / OpenAI / Claude), base URL,
   model, API key (write-only), capability probe results shown explicitly
-- **STT** — same shape as LLM
+- **STT** ⭐ — **Local / Remote switch**, with a live latency probe for each:
+  - *Local* — model picker (`tiny.en` / `base.en`), path, tmpfs cache status, CPU thread count
+  - *Remote* — server URL, **"test connection"** that round-trips a real WAV and reports
+    measured latency, plus a `/load`-style model hint if the server exposes it
+  - Third-party: OpenAI / ElevenLabs
+  - Switching is instant and the console shows which one is live
 - **Skills** — browse, read, install, remove
 - **MCP** — add/edit/remove, probe, discover tools, **HA OAuth connect button**
 - **Keys** — write-only fields; server never echoes a stored secret
@@ -401,7 +438,8 @@ Same origin as the API, no build step.
 2. **Wake word** — Porcupine, bootstrap keyword, `kaya:keyword`. No keys.
 3. **TTS spike** ⭐ — Edge adapter + MP3→PCM decode + `kaya tts test`. **No keys. Proves the
    riskiest assumption first**, before anything is built on top of it.
-4. **STT** — whisper.cpp, then OpenAI fallback. No keys if local.
+4. **STT** — one interface, `local` (spawned `whisper-cli`) and `remote` (HTTP `/inference`)
+   from the same start, plus OpenAI. No keys for either whisper path.
 5. **LLM provider layer** — openai-compat, `capabilities.ts` probe, system prompt.
 6. **Tool registry + `web_search`** — proves the tool loop end to end.
 7. **`timers`**
@@ -427,6 +465,9 @@ thirty seconds and it's the difference between a five-minute setup and a five-ho
 - [ ] `kaya doctor` → arch, mic, speaker, wake model, **TTS speaks a real sentence**, LLM reachable
 - [ ] **Pi 3 / 64-bit OS: wake word fires from the shipped `cortex-a53` binary**, no build step
 - [ ] 24 h soak on the target board — no SD-card corruption, no memory creep, wake stays reliable
+- [ ] **STT: switch local ↔ remote in the dashboard → next utterance uses the new path, no restart**
+- [ ] **Local STT on a Pi 3: wake word still fires during a transcription pass** (sensitivity-dip mitigation works)
+- [ ] **Remote STT console test button reports real measured latency** for the configured URL
 - [ ] Wake word → full turn → spoken answer, latency stated
 - [ ] "set a timer for 3 minutes" → fires, speaks, survives reboot
 - [ ] "turn off the den lamp" via **HA MCP** → lamp off, confirmed audibly
@@ -444,9 +485,11 @@ thirty seconds and it's the difference between a five-minute setup and a five-ho
 
 ## 11. Open questions
 
-1. **Which STT?** Local whisper.cpp on a Pi 3 is ~1–2 s per short utterance and fights the
-   wake word for cores. I'd run `whisper-server` on a Pi 4/5 or any x86 box on your LAN and
-   point Kaya at it, keeping the Pi as a thin voice terminal. Confirm remote-over-local?
+1. ~~Which STT?~~ **Answered: both, switchable at runtime from the dashboard.** `local`
+   (whisper.cpp on the Pi) and `remote` (whisper-server on a LAN box) are the same engine
+   over two transports, so it ships as a config switch rather than a decision. See §5 for
+   the local-mode costs (model reload per utterance, CPU contention with the wake word) and
+   the two mitigations. Default: `remote`, with `local` as the offline fallback.
 2. ~~Which local model?~~ **Answered: MiniMax M3.1-Flash-Preview.** It does `tool_calls` over
    the OpenAI-compatible route, so no adapter needed — just `baseUrl` + `model`. See §5 for
    the four protocol gotchas, especially **`reasoning_effort` defaults to `max` and thinking
@@ -462,8 +505,9 @@ thirty seconds and it's the difference between a five-minute setup and a five-ho
    and it's what the rest of the plan assumes. Just want to confirm the target before I tune
    defaults.
 
-Defaults if I don't hear otherwise: remote STT on LAN, `reasoning_effort: "low"`, all four TTS
-adapters built with Edge active, targeting a Pi 3 on 64-bit Raspberry Pi OS.
+Defaults if I don't hear otherwise: STT `remote` with `local` available in the dashboard,
+`reasoning_effort: "low"`, all four TTS adapters built with Edge active, targeting a Pi 3
+on 64-bit Raspberry Pi OS.
 
 **Next step: `kaya doctor` + step 1 and step 3, together** — audio I/O and the TTS spike,
 because if Edge TTS doesn't speak on your hardware, that changes the plan and I'd rather find

@@ -30,7 +30,8 @@ web console served from the same process.
 
 - **Wake word** — Porcupine, running entirely on-device. Audio never leaves the machine
   while idle.
-- **Voice in** — whisper.cpp on a LAN box, or OpenAI/ElevenLabs STT.
+- **Voice in** — whisper.cpp, either **on the Pi or on a second device on your LAN** —
+  switchable from the dashboard at runtime. OpenAI/ElevenLabs STT also available.
 - **Brain** — any OpenAI-compatible endpoint: Ollama, llama.cpp, LM Studio, vLLM, OpenAI,
   or MiniMax. Tested first against **MiniMax M3.1-Flash-Preview**.
 - **Voice out** — **Edge TTS by default** (free, no API key, no signup), with OpenAI,
@@ -100,8 +101,10 @@ A few decisions worth knowing before you read it:
   just a chatbot.
 - **Home Assistant via MCP, not REST.** HA already understands "make it cozier" through
   its Assist pipeline. Reimplementing that would be strictly worse.
-- **STT belongs on a LAN box.** A Pi 3 is fine for wake word, audio, and playback. It's
-  too slow to transcribe without starving the wake word of CPU.
+- **STT is a switch, not a decision.** `local` runs whisper.cpp on the Pi (offline, but it
+  reloads the model every turn and competes with the wake word for cores); `remote` points
+  at `whisper-server` on another machine. Same engine, two transports, changed in the
+  dashboard with no restart. Default `remote`, `local` as the offline fallback.
 
 ---
 
