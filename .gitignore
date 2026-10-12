@@ -1,0 +1,32 @@
+# deps
+node_modules/
+
+# secrets — never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# build
+dist/
+build/
+*.tsbuildinfo
+
+# runtime state
+.kaya/
+data/
+*.log
+
+# assets fetched at setup time (large binaries, see `kaya keyword`)
+assets/*.ppn
+assets/*.pv
+assets/*.onnx
+
+# os
+.DS_Store
+Thumbs.db
+
+# editors
+.vscode/
+.idea/

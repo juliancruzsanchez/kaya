@@ -1,0 +1,17 @@
+{
+  "name": "kaya",
+  "version": "0.0.0",
+  "private": true,
+  "description": "An always-on voice assistant: wake word, web search, timers, and Home Assistant over MCP.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "bun": ">=1.4.0" },
+  "scripts": {
+    "dev": "bun run src/index.ts speak",
+    "serve": "bun run src/index.ts serve",
+    "doctor": "bun run src/index.ts doctor",
+    "keyword": "bun run src/index.ts keyword",
+    "tts": "bun run src/index.ts tts",
+    "skills": "bun run src/index.ts skills"
+  }
+}

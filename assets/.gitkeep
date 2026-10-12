@@ -1,0 +1,2 @@
+Wake-word binaries and models are fetched at setup time and are not committed.
+Run `bun run keyword` to populate this directory.
